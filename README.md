@@ -7,10 +7,10 @@ A simple breathing exercise app to help you relax and reduce stress.
 - [x] Breathing exercise
 - [x] Sound effects
 - [x] Settings
-- [ ] Customizable breathing parameters
-- [ ] Statistics
-- [ ] Dark mode
-- [ ] Share with friends
+- [x] Customizable breathing parameters
+- [x] Statistics
+- [x] Dark mode
+- [x] Share with friends
 
 ## How to Install
 
