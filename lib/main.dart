@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'dart:math' as math;
+import 'dart:async';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -540,6 +541,7 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage>
     with SingleTickerProviderStateMixin {
+  Timer? _timer;
   late AnimationController _controller;
   String _text = 'Ready';
   int _phase = 0;
@@ -698,13 +700,15 @@ class _MainPageState extends State<MainPage>
   }
 
   void _restartExercise() {
-    setState(() {
-      _bar1Value = 0.0;
-      _bar2Value = 0.0;
-      _bar3Value = 0.0;
-      _phase = 0;
-    });
-    _startBreathingExercise();
+    // Cancel current exercise
+    _isActive = false;
+    _timer?.cancel();
+
+    // Replace current page with a new instance
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const MainPage()),
+    );
   }
 
   void _completeExercise() async {
@@ -730,6 +734,7 @@ class _MainPageState extends State<MainPage>
 
   @override
   void dispose() {
+    _timer?.cancel();
     _controller.dispose();
     _audioPlayer.dispose();
     super.dispose();
