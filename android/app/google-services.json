@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "392362638391",
+    "project_id": "stillmind-bde4e",
+    "storage_bucket": "stillmind-bde4e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:392362638391:android:cc1faad026303e29d913b2",
+        "android_client_info": {
+          "package_name": "com.example.stillmind"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAoLxOG1CLdh0s8UMlLL0lhxAwK8c-m0dQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
