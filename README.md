@@ -14,7 +14,11 @@ A simple breathing exercise app to help you relax and reduce stress.
 
 ## How to Install
 
-coming soon...
+coming soon for microsoft store...
+
+1. download the latest release from the releases page on mobile
+2. run the apk
+3. enjoy!
 
 ## Run Using Flutter
 
