@@ -11,12 +11,13 @@ A simple breathing exercise app to help you relax and reduce stress.
 - [x] Statistics
 - [x] Dark mode
 - [x] Share with friends
+- [x] Cloud storage
 
 ## How to Install
 
 coming soon for microsoft store...
 
-1. download the latest release from the releases page on mobile
+1. download the latest release(v1.0.2) from the releases page on mobile
 2. run the apk
 3. enjoy!
 
