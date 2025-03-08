@@ -6,6 +6,10 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'dart:math' as math;
 import 'dart:async';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:stillmind/services/supabase_service.dart';
+import 'package:stillmind/screens/auth_screen.dart';
+import 'screens/account_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +18,13 @@ void main() async {
   final notificationService = NotificationService();
   await notificationService.initialize();
   await notificationService.requestPermissions();
+
+  // Initialize Supabase
+  final supabaseService = SupabaseService();
+  await supabaseService.initialize(
+    'https://aapfficpraduyrwccqyc.supabase.co',
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFhcGZmaWNwcmFkdXlyd2NjcXljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEyNTA2ODksImV4cCI6MjA1NjgyNjY4OX0.ioe9RxNUJgD4Y0UJIHD1pkVVRHm9QJoWFizlmQ4i6-Y',
+  );
 
   runApp(const MyApp());
 }
@@ -28,18 +39,29 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   bool _isDarkMode = false;
   final AudioManager _audioManager = AudioManager();
+  final SupabaseService _supabaseService = SupabaseService();
 
   @override
   void initState() {
     super.initState();
-    _loadThemeMode();
+    _loadSettings();
     _initBackgroundMusic();
   }
 
   Future<void> _initBackgroundMusic() async {
     await _audioManager.initialize();
-    final prefs = await SharedPreferences.getInstance();
-    final isSoundEnabled = prefs.getBool('soundEnabled') ?? true;
+    
+    // Get sound settings from Supabase if user is logged in
+    bool isSoundEnabled = true;
+    if (_supabaseService.isAuthenticated) {
+      final settings = await _supabaseService.getSettings();
+      isSoundEnabled = settings['soundEnabled'] ?? true;
+    } else {
+      // Fallback to shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      isSoundEnabled = prefs.getBool('soundEnabled') ?? true;
+    }
+    
     if (isSoundEnabled) {
       await _audioManager.playBackgroundMusic();
     }
@@ -51,17 +73,42 @@ class _MyAppState extends State<MyApp> {
     super.dispose();
   }
 
-  Future<void> _loadThemeMode() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isDarkMode = prefs.getBool('isDarkMode') ?? false;
-    });
+  Future<void> _loadSettings() async {
+    if (_supabaseService.isAuthenticated) {
+      // Get settings from Supabase
+      final settings = await _supabaseService.getSettings();
+      setState(() {
+        _isDarkMode = settings['isDarkMode'] ?? false;
+      });
+    } else {
+      // Fallback to shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _isDarkMode = prefs.getBool('isDarkMode') ?? false;
+      });
+    }
   }
 
   void updateTheme(bool isDarkMode) {
     setState(() {
       _isDarkMode = isDarkMode;
     });
+    
+    // Print debug information
+    print("updateTheme called with isDarkMode: $isDarkMode");
+    
+    // Save theme setting to proper storage
+    if (_supabaseService.isAuthenticated) {
+      _supabaseService.saveSettings({
+        'isDarkMode': isDarkMode,
+        'soundEnabled': true,  // We'll fetch the actual value in a full implementation
+        'visualizationType': 0, // Default to avoid overwriting other settings
+      });
+    } else {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool('isDarkMode', isDarkMode);
+      });
+    }
   }
 
   @override
@@ -95,7 +142,12 @@ class _MyAppState extends State<MyApp> {
         iconTheme: const IconThemeData(color: Color(0xFFFFFFFF)), // White
       ),
       themeMode: _isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      home: HomePage(updateTheme: updateTheme, isDarkMode: _isDarkMode),
+      initialRoute: _supabaseService.isAuthenticated ? '/home' : '/auth',
+      routes: {
+        '/auth': (context) => const AuthScreen(),
+        '/home': (context) => HomePage(updateTheme: updateTheme, isDarkMode: _isDarkMode),
+        '/account': (context) => const AccountPage(),
+      },
     );
   }
 }
@@ -112,140 +164,186 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        image: DecorationImage(
-          image: AssetImage(
-            isDarkMode
-                ? 'assets/images/dark_background.jpg'
-                : 'assets/images/light_background.jpg',
-          ),
-          fit: BoxFit.cover,
-          colorFilter: ColorFilter.mode(
-            Colors.black.withAlpha(51), // 0.2 opacity * 255 = 51
-            BlendMode.darken,
-          ),
-        ),
-      ),
-      child: Scaffold(
-        backgroundColor:
-            Colors.transparent, // Make scaffold background transparent
-        extendBodyBehindAppBar: true, // Extend body behind app bar
-        appBar: AppBar(
-          backgroundColor: Colors.transparent, // Make app bar transparent
-          elevation: 0, // Remove app bar shadow
-          title: const Text(
-            'StillMind',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 24,
-            ),
-          ),
-          centerTitle: true,
-          actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const HelpPage()),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  foregroundColor: Theme.of(context).textTheme.bodyLarge?.color,
-                  padding: const EdgeInsets.all(8),
-                  minimumSize: const Size(40, 40),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
+    final primaryColor = Theme.of(context).primaryColor;
+
+    return Scaffold(
+      body: AppBackground(
+        isDarkMode: isDarkMode,
+        child: Stack(
+          children: [
+            // Top right buttons
+            Positioned(
+              top: 16,
+              right: 16,
+              child: Row(
+                children: [
+                  // Account button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.account_circle, color: Colors.white),
+                      label: const Text(
+                        'Account',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      onPressed: () {
+                        Navigator.pushNamed(context, '/account');
+                      },
+                    ),
                   ),
-                ),
-                child: Image.asset(
-                  'assets/icons/help.png',
-                  width: 20,
-                  height: 20,
-                  color: Theme.of(context).iconTheme.color,
+                  const SizedBox(width: 8),
+                  // Help button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.help, color: Colors.white),
+                      onPressed: () {
+                        showDialog(
+                          context: context,
+                          builder: (BuildContext context) => AlertDialog(
+                            title: const Text('How to use StillMind'),
+                            content: const SingleChildScrollView(
+                              child: Text(
+                                'StillMind is a breathing exercise app designed to help you '
+                                'reduce stress and improve focus.\n\n'
+                                'Follow the breathing patterns on the main screen. '
+                                'The app will guide you through inhaling, holding, and exhaling.\n\n'
+                                'Track your progress on the Stats page and earn achievements '
+                                'as you develop a consistent breathing practice.\n\n'
+                                'Customize your experience in the Settings page.',
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Got it'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Main content
+            Center(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Title
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text(
+                        'StillMind',
+                        style: TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 60),
+                    
+                    // Navigation buttons
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Column(
+                        children: [
+                          _buildNavButton(
+                            context,
+                            icon: Icons.play_arrow,
+                            label: 'Start',
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const MainPage()),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildNavButton(
+                            context,
+                            icon: Icons.bar_chart,
+                            label: 'Stats',
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const StatsPage()),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildNavButton(
+                            context,
+                            icon: Icons.emoji_events,
+                            label: 'Achievements',
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const AchievementsPage()),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildNavButton(
+                            context,
+                            icon: Icons.settings,
+                            label: 'Settings',
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => SettingsPage(
+                                  updateTheme: updateTheme,
+                                  isDarkMode: isDarkMode,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ],
-        ),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(height: 20),
-              _buildButton(context, 'Stats', 'stats.png', const StatsPage()),
-              const SizedBox(height: 16),
-              _buildButton(context, 'Start', 'play.png', const MainPage()),
-              const SizedBox(height: 16),
-              _buildButton(
-                context,
-                'Achievements',
-                'trophy.png',
-                const AchievementsPage(),
-              ),
-              const SizedBox(height: 16),
-              _buildButton(
-                context,
-                'Settings',
-                'settings.png',
-                SettingsPage(
-                  updateTheme: updateTheme,
-                  isDarkMode: isDarkMode,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
   }
 
-  // Update the button style to have some transparency
-  Widget _buildButton(
-      BuildContext context, String label, String iconPath, Widget destination) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
-      child: ElevatedButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => destination),
-          );
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Theme.of(context)
-              .primaryColor
-              .withAlpha(230), // 0.9 opacity * 255 = 230
-          foregroundColor: Theme.of(context).textTheme.bodyLarge?.color,
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(30),
+  Widget _buildNavButton(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Theme.of(context).primaryColor.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: TextButton.icon(
+        icon: Icon(icon, color: Colors.white, size: 24),
+        label: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
           ),
-          elevation: 3,
-          minimumSize: const Size(double.infinity, 64),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset(
-              'assets/icons/$iconPath',
-              width: 28,
-              height: 28,
-              color: Theme.of(context).iconTheme.color,
-            ),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-                color: Theme.of(context).textTheme.bodyLarge?.color,
-              ),
-            ),
-          ],
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         ),
       ),
     );
@@ -294,6 +392,7 @@ class StatsPage extends StatefulWidget {
 class _StatsPageState extends State<StatsPage> {
   Map<String, int> cyclesData = {};
   int currentStreak = 0;
+  final SupabaseService _supabaseService = SupabaseService();
 
   @override
   void initState() {
@@ -302,10 +401,9 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Future<void> _loadCyclesData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('breathingCycles') ?? '{}';
+    final stats = await _supabaseService.getBreathingStats();
     setState(() {
-      cyclesData = Map<String, int>.from(json.decode(data));
+      cyclesData = stats;
       currentStreak = _calculateStreak();
     });
   }
@@ -502,7 +600,7 @@ class _StatsPageState extends State<StatsPage> {
                         ),
                         const Text(
                           'Total Cycles',
-                          style: TextStyle(fontSize: 16),
+                          style: TextStyle(fontSize: 14),
                         ),
                       ],
                     ),
@@ -517,7 +615,7 @@ class _StatsPageState extends State<StatsPage> {
                         ),
                         const Text(
                           'Day Streak',
-                          style: TextStyle(fontSize: 16),
+                          style: TextStyle(fontSize: 14),
                         ),
                       ],
                     ),
@@ -556,6 +654,7 @@ class _MainPageState extends State<MainPage>
   late int _holdTime;
   late int _exhaleTime;
   late bool _isSoundEnabled;
+  final SupabaseService _supabaseService = SupabaseService();
 
   // List of meditation and breathing quotes
   final List<String> _quotes = [
@@ -604,15 +703,26 @@ class _MainPageState extends State<MainPage>
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isSoundEnabled = prefs.getBool('soundEnabled') ?? true;
-      _inhaleTime = prefs.getInt('inhaleTime') ?? 4;
-      _holdTime = prefs.getInt('holdTime') ?? 7;
-      _exhaleTime = prefs.getInt('exhaleTime') ?? 8;
-      _visualizationType =
-          VisualizationType.values[prefs.getInt('visualizationType') ?? 0];
-    });
+    if (_supabaseService.isAuthenticated) {
+      final settings = await _supabaseService.getSettings();
+      setState(() {
+        _isSoundEnabled = settings['soundEnabled'] ?? true;
+        _inhaleTime = settings['inhaleTime'] ?? 4;
+        _holdTime = settings['holdTime'] ?? 7;
+        _exhaleTime = settings['exhaleTime'] ?? 8;
+        _visualizationType = VisualizationType.values[settings['visualizationType'] ?? 0];
+      });
+    } else {
+      // Fallback to shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _isSoundEnabled = prefs.getBool('soundEnabled') ?? true;
+        _inhaleTime = prefs.getInt('inhaleTime') ?? 4;
+        _holdTime = prefs.getInt('holdTime') ?? 7;
+        _exhaleTime = prefs.getInt('exhaleTime') ?? 8;
+        _visualizationType = VisualizationType.values[prefs.getInt('visualizationType') ?? 0];
+      });
+    }
   }
 
   Future<void> _playPhaseAudio(String phase) async {
@@ -685,18 +795,11 @@ class _MainPageState extends State<MainPage>
   }
 
   Future<void> _saveCycleCompletion() async {
-    final prefs = await SharedPreferences.getInstance();
     final today = DateTime.now().toIso8601String().split('T')[0];
-
-    // Get existing data
-    final data = prefs.getString('breathingCycles') ?? '{}';
-    final cyclesMap = Map<String, int>.from(json.decode(data));
-
-    // Update today's count
-    cyclesMap[today] = (cyclesMap[today] ?? 0) + 1;
-
-    // Save updated data
-    await prefs.setString('breathingCycles', json.encode(cyclesMap));
+    await _supabaseService.saveBreathingCycle(today, 1);
+    
+    // Update achievements after completing a cycle
+    await _supabaseService.updateAchievementProgress();
   }
 
   void _restartExercise() {
@@ -725,11 +828,17 @@ class _MainPageState extends State<MainPage>
   }
 
   void _loadVisualizationType() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _visualizationType =
-          VisualizationType.values[prefs.getInt('visualizationType') ?? 0];
-    });
+    if (_supabaseService.isAuthenticated) {
+      final settings = await _supabaseService.getSettings();
+      setState(() {
+        _visualizationType = VisualizationType.values[settings['visualizationType'] ?? 0];
+      });
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _visualizationType = VisualizationType.values[prefs.getInt('visualizationType') ?? 0];
+      });
+    }
   }
 
   @override
@@ -869,8 +978,55 @@ class AchievementsPage extends StatefulWidget {
 }
 
 class _AchievementsPageState extends State<AchievementsPage> {
-  Map<String, int> cyclesData = {};
-  int currentStreak = 0;
+  final SupabaseService _supabaseService = SupabaseService();
+  Map<String, dynamic> _achievements = {};
+  bool _isLoading = true;
+
+  // Define achievement data
+  final List<Map<String, dynamic>> _achievementsList = [
+    {
+      'id': 'getting_started',
+      'icon': Icons.emoji_events,
+      'title': 'Getting Started',
+      'description': 'Complete your first breathing exercise',
+      'requirement': 1, // 1 exercise
+    },
+    {
+      'id': 'regular_breather',
+      'icon': Icons.local_florist,
+      'title': 'Regular Breather',
+      'description': 'Complete 50 breathing exercises',
+      'requirement': 50, // 50 exercises
+    },
+    {
+      'id': 'breathing_master',
+      'icon': Icons.forest,
+      'title': 'Breathing Master',
+      'description': 'Complete 100 breathing exercises',
+      'requirement': 100, // 100 exercises
+    },
+    {
+      'id': 'consistent',
+      'icon': Icons.local_fire_department,
+      'title': 'Consistent',
+      'description': 'Maintain a 3-day streak',
+      'streak_requirement': 3, // 3-day streak
+    },
+    {
+      'id': 'weekly_warrior',
+      'icon': Icons.person,
+      'title': 'Weekly Warrior',
+      'description': 'Maintain a 7-day streak',
+      'streak_requirement': 7, // 7-day streak
+    },
+    {
+      'id': 'monthly_master',
+      'icon': Icons.star,
+      'title': 'Monthly Master',
+      'description': 'Maintain a 30-day streak',
+      'streak_requirement': 30, // 30-day streak
+    },
+  ];
 
   @override
   void initState() {
@@ -879,41 +1035,58 @@ class _AchievementsPageState extends State<AchievementsPage> {
   }
 
   Future<void> _loadAchievementData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('breathingCycles') ?? '{}';
-    setState(() {
-      cyclesData = Map<String, int>.from(json.decode(data));
-      currentStreak = _calculateStreak();
-    });
+    setState(() => _isLoading = true);
+    
+    // Update achievement progress based on latest stats
+    await _supabaseService.updateAchievementProgress();
+    
+    // Load current achievements
+    _achievements = await _supabaseService.getAchievements();
+    
+    setState(() => _isLoading = false);
   }
 
-  int _calculateStreak() {
-    if (cyclesData.isEmpty) return 0;
-
-    final now = DateTime.now();
-    var currentDate = now;
-    var streak = 0;
-
-    while (true) {
-      String dateKey = currentDate.toIso8601String().split('T')[0];
-      if (cyclesData.containsKey(dateKey) && cyclesData[dateKey]! > 0) {
-        streak++;
-        currentDate = currentDate.subtract(const Duration(days: 1));
-      } else {
-        break;
-      }
+  bool _isAchievementCompleted(String achievementId) {
+    if (_achievements.containsKey('completed')) {
+      return List<String>.from(_achievements['completed']).contains(achievementId);
     }
-
-    return streak;
+    return false;
   }
 
-  int getTotalCycles() {
-    return cyclesData.values.fold(0, (sum, count) => sum + count);
+  int _getTotalExercises() {
+    if (_achievements.containsKey('progress') && 
+        _achievements['progress'].containsKey('breathing_exercises')) {
+      return _achievements['progress']['breathing_exercises'];
+    }
+    return 0;
+  }
+
+  int _getCurrentStreak() {
+    if (_achievements.containsKey('progress') && 
+        _achievements['progress'].containsKey('current_streak')) {
+      return _achievements['progress']['current_streak'];
+    }
+    return 0;
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (_isLoading) {
+      return AppBackground(
+        isDarkMode: isDark,
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            title: const Text('Achievements'),
+          ),
+          body: const Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
 
     return AppBackground(
       isDarkMode: isDark,
@@ -940,42 +1113,57 @@ class _AchievementsPageState extends State<AchievementsPage> {
             bottom: 16,
           ),
           children: [
-            _buildAchievementTile(
-              icon: Icons.emoji_events,
-              title: 'Getting Started',
-              description: 'Complete your first breathing exercise',
-              isCompleted: getTotalCycles() >= 1,
+            // Stats card
+            Card(
+              margin: const EdgeInsets.only(bottom: 24),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Column(
+                      children: [
+                        Text(
+                          _getTotalExercises().toString(),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Text(
+                          'Total Exercises',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                      ],
+                    ),
+                    Column(
+                      children: [
+                        Text(
+                          _getCurrentStreak().toString(),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Text(
+                          'Day Streak',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ),
-            _buildAchievementTile(
-              icon: Icons.local_florist,
-              title: 'Regular Breather',
-              description: 'Complete 50 breathing exercises',
-              isCompleted: getTotalCycles() >= 50,
-            ),
-            _buildAchievementTile(
-              icon: Icons.forest,
-              title: 'Breathing Master',
-              description: 'Complete 100 breathing exercises',
-              isCompleted: getTotalCycles() >= 100,
-            ),
-            _buildAchievementTile(
-              icon: Icons.local_fire_department,
-              title: 'Consistent',
-              description: 'Maintain a 3-day streak',
-              isCompleted: currentStreak >= 3,
-            ),
-            _buildAchievementTile(
-              icon: Icons.person,
-              title: 'Weekly Warrior',
-              description: 'Maintain a 7-day streak',
-              isCompleted: currentStreak >= 7,
-            ),
-            _buildAchievementTile(
-              icon: Icons.star,
-              title: 'Monthly Master',
-              description: 'Maintain a 30-day streak',
-              isCompleted: currentStreak >= 30,
-            ),
+            
+            // Achievement list
+            ..._achievementsList.map((achievement) => _buildAchievementTile(
+              id: achievement['id'],
+              icon: achievement['icon'],
+              title: achievement['title'],
+              description: achievement['description'],
+              isCompleted: _isAchievementCompleted(achievement['id']),
+            )),
           ],
         ),
       ),
@@ -983,6 +1171,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
   }
 
   Widget _buildAchievementTile({
+    required String id,
     required IconData icon,
     required String title,
     required String description,
@@ -1087,6 +1276,8 @@ class _SettingsPageState extends State<SettingsPage> {
   NotificationTime? _notificationTime;
   final AudioManager _audioManager = AudioManager();
   final NotificationService _notificationService = NotificationService();
+  final SupabaseService _supabaseService = SupabaseService();
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -1095,56 +1286,117 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _visualizationType =
-          VisualizationType.values[prefs.getInt('visualizationType') ?? 0];
-      _isSoundEnabled = prefs.getBool('soundEnabled') ?? true;
-      _inhaleTime = prefs.getInt('inhaleTime') ?? 4;
-      _holdTime = prefs.getInt('holdTime') ?? 7;
-      _exhaleTime = prefs.getInt('exhaleTime') ?? 8;
+    setState(() => _isLoading = true);
+    
+    if (_supabaseService.isAuthenticated) {
+      // Load settings from Supabase
+      final settings = await _supabaseService.getSettings();
+      final notificationSettings = await _supabaseService.getNotificationSettings();
+      
+      setState(() {
+        _visualizationType = VisualizationType.values[settings['visualizationType'] ?? 0];
+        _isSoundEnabled = settings['soundEnabled'] ?? true;
+        _inhaleTime = settings['inhaleTime'] ?? 4;
+        _holdTime = settings['holdTime'] ?? 7;
+        _exhaleTime = settings['exhaleTime'] ?? 8;
+        
+        // Load notification time
+        final hour = notificationSettings['hour'];
+        final minute = notificationSettings['minute'];
+        if (hour != null && minute != null) {
+          _notificationTime = NotificationTime(hour, minute);
+        }
+        
+        _isLoading = false;
+      });
+    } else {
+      // Fallback to shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _visualizationType = VisualizationType.values[prefs.getInt('visualizationType') ?? 0];
+        _isSoundEnabled = prefs.getBool('soundEnabled') ?? true;
+        _inhaleTime = prefs.getInt('inhaleTime') ?? 4;
+        _holdTime = prefs.getInt('holdTime') ?? 7;
+        _exhaleTime = prefs.getInt('exhaleTime') ?? 8;
 
-      // Load notification time
-      final hour = prefs.getInt('notificationHour');
-      final minute = prefs.getInt('notificationMinute');
-      if (hour != null && minute != null) {
-        _notificationTime = NotificationTime(hour, minute);
-      }
-    });
+        // Load notification time
+        final hour = prefs.getInt('notificationHour');
+        final minute = prefs.getInt('notificationMinute');
+        if (hour != null && minute != null) {
+          _notificationTime = NotificationTime(hour, minute);
+        }
+        
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // Save theme setting
-    await prefs.setBool('isDarkMode', widget.isDarkMode);
-
-    // Save sound settings
-    await prefs.setBool('soundEnabled', _isSoundEnabled);
-
-    // Save breathing durations
-    await prefs.setInt('inhaleTime', _inhaleTime);
-    await prefs.setInt('holdTime', _holdTime);
-    await prefs.setInt('exhaleTime', _exhaleTime);
-
-    // Save notification time
-    if (_notificationTime != null) {
-      await prefs.setInt('notificationHour', _notificationTime!.hour);
-      await prefs.setInt('notificationMinute', _notificationTime!.minute);
-
-      // Reschedule notification with new time
-      await _notificationService.scheduleDailyNotification(
-        hour: _notificationTime!.hour,
-        minute: _notificationTime!.minute,
-      );
+    if (_supabaseService.isAuthenticated) {
+      // Save all settings to Supabase in the specified format
+      await _supabaseService.saveSettings({
+        'isDarkMode': widget.isDarkMode,
+        'soundEnabled': _isSoundEnabled,
+        'notificationsEnabled': _notificationTime != null,
+        'inhaleTime': _inhaleTime,
+        'holdTime': _holdTime,
+        'exhaleTime': _exhaleTime,
+        'visualizationType': _visualizationType.index,
+      });
+      
+      // Save notification settings separately
+      if (_notificationTime != null) {
+        await _supabaseService.saveNotificationSettings({
+          'hour': _notificationTime!.hour,
+          'minute': _notificationTime!.minute,
+          'enabled': true
+        });
+        
+        // Schedule notification
+        await _notificationService.scheduleDailyNotification(
+          hour: _notificationTime!.hour,
+          minute: _notificationTime!.minute,
+        );
+      } else {
+        await _supabaseService.saveNotificationSettings({
+          'enabled': false
+        });
+        await _notificationService.cancelAllNotifications();
+      }
     } else {
-      await prefs.remove('notificationHour');
-      await prefs.remove('notificationMinute');
-      await _notificationService.cancelAllNotifications();
+      // Fallback to shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Save theme setting
+      await prefs.setBool('isDarkMode', widget.isDarkMode);
+      
+      // Save sound settings
+      await prefs.setBool('soundEnabled', _isSoundEnabled);
+      
+      // Save breathing durations
+      await prefs.setInt('inhaleTime', _inhaleTime);
+      await prefs.setInt('holdTime', _holdTime);
+      await prefs.setInt('exhaleTime', _exhaleTime);
+      
+      // Save notification time
+      if (_notificationTime != null) {
+        await prefs.setInt('notificationHour', _notificationTime!.hour);
+        await prefs.setInt('notificationMinute', _notificationTime!.minute);
+        
+        // Schedule notification
+        await _notificationService.scheduleDailyNotification(
+          hour: _notificationTime!.hour,
+          minute: _notificationTime!.minute,
+        );
+      } else {
+        await prefs.remove('notificationHour');
+        await prefs.remove('notificationMinute');
+        await _notificationService.cancelAllNotifications();
+      }
+      
+      // Save visualization type
+      await prefs.setInt('visualizationType', _visualizationType.index);
     }
-
-    // Save visualization type
-    await prefs.setInt('visualizationType', _visualizationType.index);
 
     // Update background music state
     if (_isSoundEnabled) {
@@ -1179,6 +1431,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Settings')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -1353,6 +1612,7 @@ class _SettingsPageState extends State<SettingsPage> {
               }).toList(),
             ),
           ),
+          const Divider(),
         ],
       ),
     );
