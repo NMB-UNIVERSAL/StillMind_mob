@@ -329,7 +329,7 @@ class HomePage extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Theme.of(context).primaryColor.withOpacity(0.3),
+        color: Theme.of(context).primaryColor.withOpacity(0.7),
         borderRadius: BorderRadius.circular(10),
       ),
       child: TextButton.icon(

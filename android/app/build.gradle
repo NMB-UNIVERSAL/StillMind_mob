@@ -30,7 +30,7 @@ apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
 
 android {
     namespace "com.example.stillmind"
-    compileSdkVersion 34
+    compileSdk = 35
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -49,8 +49,8 @@ android {
 
     defaultConfig {
         applicationId "com.example.stillmind"
-        minSdkVersion 21
-        targetSdkVersion 34
+        minSdkVersion flutter.minSdkVersion
+        targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
